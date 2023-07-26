@@ -33,7 +33,10 @@ Thêm "../../../../etc/passwd%00" vào URL
 ```
 Example URL: http//10.10.10.10/index.php?file=../../../../etc/passwd%00
 ```    
-Muốn truy cập một file không phải kiểu “text” chúng sẽ sử dụng một %00 (kí tự byte rỗng sau tên của file)
+Chức năng include đã thực thi việc thêm .php ở cuối file thành /passwd.php, vì vậy nó trả về lỗi sai, để bypass thì ta có thể sử dụng NULL byte, tức có thể thêm vào cuối như %00 hoặc 0x00 ở dạng hex với dữ liệu do người dùng cung cấp để kết thúc chuỗi. Ứng dụng web sẽ bỏ qua bất kì thứ gì xuất hiện sau NULL byte mà cụ thể ở đây là .php
+
+Tuy nhiên thì trick này sẽ chỉ được sử dụng với các phiên bản php dưới 5.3.4
+
 ```
 <?php
 $file = $_GET['file'];
@@ -107,11 +110,42 @@ Payload: ssh <?php system($_GET['c']);?>@<target_ip>
 Execute RCE: http//10.10.10.10/index.php?file=../../../../../../../var/log/auth.log&c=id
 ```
 ### Dữ liệu nhật ký của Apache
-Apache là một máy chủ web được sử dụng rất phổ biến để triển khai các hệ thống website. Nó có hai tệp tin nhật ký chính là nhật ký truy cập và nhật ký ghi lại các báo lỗi của hệ thống. Nhật ký truy cập chứa thông tin về tất cả các yêu cầu được gửi lên máy chủ và nhật ký thông báo lỗi chứa thông điệp lỗi của hệ thống. 
+Apache là một máy chủ web được sử dụng rất phổ biến để triển khai các hệ thống website. Nó có hai tệp tin nhật ký chính là access log (nhật ký truy cập) và error log (nhật ký ghi lại các báo lỗi của hệ thống). 
+
+- Access log (Nhật ký truy cập): chứa thông tin về tất cả các yêu cầu được gửi lên máy chủ
+- Error log (Nhật ký thông báo lỗi): chứa thông điệp lỗi của hệ thống 
 
 Phần chúng ta quan tâm là nhật ký truy cập. Cấu trúc của tệp tin chứa thông tin nhật ký truy cập như sau (tùy từng loại cấu hình có thể có các định dạng khác nhau, tuy nhiên về cơ bản nó cung cấp các thông tin tương tự như dòng dữ liệu bên dưới):
 
-```127.0.0.1 - - [06/Nov/2014:17:14:31 +0100] "GET / HTTP/1.1" 200 7562 "-" "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Ubuntu Chromium/37.0.2062.120 Chrome/37.0.2062.120 Safari/537.36"```
+```
+127.0.0.1 - - [06/Nov/2014:17:14:31 +0100] "GET / HTTP/1.1" 200 7562 "-" "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Ubuntu Chromium/37.0.2062.120 Chrome/37.0.2062.120 Safari/537.36"
+```
+
+### Access log
+File log được lưu trữ tại ```/var/log/httpd/access_log (hoặc /var/log/apache2/access.log)```
+
+Định dạng log (LogFormat) cơ bản như sau là :``` %h %l %u %t %r %>s %b Refer User_agent.``` Trong đó:
+
+- %h: địa chỉ của máy client
+- %l: nhận dạng người dùng được xác định bởi identd (thường không SD vì không tin cậy)
+- %u: tên người dung được xác định bằng xác thức HTTP
+- %t: thời gian yêu cầu được nhận
+- %r: là yêu cầu từ người sử dụng (client)
+- %>s: mã trạng thái được gửi từ máy chủ đến máy khách
+- %b: kích cỡ phản hồi đối với client
+- Refer: tiêu đề Refeer của yêu cầu HTTP (chứa URL của trang mà yêu cầu này được khởi tạo)
+- User_agent: chuỗi xác định trình duyệt
+
+Ngoài ra còn có thêm 1 số trường khác như trong bảng định dạnh của file log như sau:
+
+![image](https://github.com/itravnn/LFI_TO_RCE_VIA_LOG_POISONING/assets/127108265/a7e18cb3-b24d-4b92-b037-2d752724a890)
+
+
+Cấu trúc của tệp tin chứa thông tin nhật ký truy cập tùy từng loại cấu hình mà có thể có các định dạng khác nhau, tuy nhiên về cơ bản nó cung cấp các thông tin tương tự như dòng dữ liệu dưới đây:
+
+```
+127.0.0.1 - - [06/Nov/2014:17:14:31  0100] "GET / HTTP/1.1" 200 7562 "-" "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Ubuntu Chromium/37.0.2062.120 Chrome/37.0.2062.120 Safari/537.36"
+```
 
 Chúng ta sẽ chia dòng dữ liệu này thành 3 phần:
 
@@ -119,7 +153,40 @@ Chúng ta sẽ chia dòng dữ liệu này thành 3 phần:
 
 ```"-": Referer```
 
-```"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Ubuntu Chromium/37.0.2062.120 Chrome/37.0.2062.120 Safari/537.36" : Thông tin về máy khách đã gửi yêu cầu đến (User agent).```
+```
+"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Ubuntu Chromium/37.0.2062.120 Chrome/37.0.2062.120 Safari/537.36" : Thông tin về máy khách đã gửi yêu cầu đến (User agent).
+```
+
+Ví dụ:
+
+![image](https://github.com/itravnn/LFI_TO_RCE_VIA_LOG_POISONING/assets/127108265/808ac650-3341-415d-81ab-e1082ec47987)
+
+
+- 172:16.79.202: là địa chỉ IP của máy client truy cập tới apache server
+- 2 trường %l %u không có giá trị sẽ hiển thị “-“
+- 18/May/2017…. Là thời gian nhận được yêu cầu từ client
+- GET/HTTP/1.1: là yêu cầu từ client
+- 404: mã trạng thái gửi từ server đến client
+- 209: kich thước phản hồi lại client
+- “http:/172.16.79.213”: url mà client yêu cầu tới server
+- Moliza …. Chrome, Safari: là chuỗi định danh trình duyệt
+
+### Error log
+Chứa thông tin về lỗi mà máy chủ web gặp phải khi xử lý các yêu cầu, chẳng hạn như khi tệp bị thiếu.
+
+Là nơi đầu tiên để xem xét khi xảy ra sự cố khi khởi động máy chủ hoặc với hoạt động của máy chủ vì nó thường chứa thông tin chi tiết về những gì xảy ra và cách khắc phục
+
+Nơi lưu trữ file log là ```/var/log/httpd/error_log``` (đối với centOs) và ```/var/log/apache2/error.log``` (đối với ubuntu)
+
+Định danh của error log tương đối tự do về mặt hình thức nhưng 1 số thông tin quan trọng có trong hầu hết các mục log như sau:
+
+- Trường thứ nhất: Trường thời gian - lưu thời gian nhận được message từ apache server
+- Trường thứ 2: liệt kê mức độ nghiêm trọng của lỗi được báo cáo
+- Trường thứ 3: Địa chỉ IP của client tạo ra lỗi
+
+Ví dụ
+![image](https://github.com/itravnn/LFI_TO_RCE_VIA_LOG_POISONING/assets/127108265/7ba3531c-39ff-4caa-a52c-94bbc2fef24f)
+
 
 Tất cả các giá trị này đều dễ dàng thay đổi bởi người dùng.
 
